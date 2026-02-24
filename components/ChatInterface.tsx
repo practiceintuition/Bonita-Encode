@@ -64,6 +64,7 @@ const CheckInForm = ({ onSave }: { onSave: (data: UserCheckIn) => void }) => {
               value={data.sleepHours}
               onChange={e => setData({...data, sleepHours: Number(e.target.value)})}
               className="w-full bg-gray-50 border border-gray-200 rounded p-1"
+              aria-label="Sleep hours"
             />
           </div>
         </div>
@@ -77,6 +78,7 @@ const CheckInForm = ({ onSave }: { onSave: (data: UserCheckIn) => void }) => {
               value={data.pain}
               onChange={e => setData({...data, pain: Number(e.target.value)})}
               className="w-full"
+              aria-label="Pain level from 0 to 10"
             />
             <span className="text-xs w-4">{data.pain}</span>
           </div>
@@ -260,6 +262,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onComplete, onExit, initi
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [quickReplies, setQuickReplies] = useState<string[]>([]);
   const [checkInContext, setCheckInContext] = useState<UserCheckIn | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -346,9 +349,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onComplete, onExit, initi
         newReplies.push("This seems too hard");
       }
       setQuickReplies(newReplies);
+      setError(null);
 
     } catch (error) {
       console.error(error);
+      setError("I'm having trouble responding right now. Please try again in a moment.");
     } finally {
       setIsLoading(false);
       setCheckInContext(undefined); // Clear context after use so it doesn't persist forever
@@ -393,6 +398,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onComplete, onExit, initi
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-hide bg-gradient-to-b from-gray-50/50 to-pink-50/30">
+        {error && (
+          <div className="mx-4 mb-2 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <p>{error}</p>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="mt-1 text-[10px] font-semibold underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
         
         <CheckInForm onSave={setCheckInContext} />
 
@@ -495,6 +515,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onComplete, onExit, initi
             onClick={() => handleSend()}
             disabled={!input.trim() || isLoading}
             className="bg-gray-900 text-white p-3 rounded-xl hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            aria-label="Send message"
           >
             <Send size={20} />
           </button>

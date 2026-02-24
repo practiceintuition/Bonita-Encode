@@ -1,48 +1,52 @@
-import React, { useState } from 'react';
-import { ViewState, ChatMessage, WellnessPlan, PillarType } from './types';
-import { generateWellnessPlan } from './services/geminiService';
-import Welcome from './components/Welcome';
-import ChatInterface from './components/ChatInterface';
-import Dashboard from './components/Dashboard';
-import Resources from './components/Resources';
-import PillarDetail from './components/PillarDetail';
-import HowToUse from './components/HowToUse';
-import { Loader2 } from 'lucide-react';
+import React, { useEffect, useState } from "react";
+import { ChatMessage, PillarType, ViewState } from "./types";
+import { useWellnessPlan } from "./hooks/useWellnessPlan";
+import AppRouter from "./components/AppRouter";
+
+/**
+ * Mapping between logical views and their URL hash representation.
+ * Keeping this centralized makes it easier to:
+ * - Add new screens.
+ * - Ensure the URL stays in sync with internal state.
+ */
+const VIEW_CONFIG: Record<ViewState, { hash: string }> = {
+  welcome: { hash: "#welcome" },
+  assessment: { hash: "#assessment" },
+  dashboard: { hash: "#dashboard" },
+  resources: { hash: "#resources" },
+  "pillar-detail": { hash: "#pillar-detail" },
+  "how-to-use": { hash: "#how-to-use" },
+};
+
+const getViewFromLocation = (): ViewState => {
+  if (typeof window === "undefined") return "welcome";
+
+  const currentHash = window.location.hash || "#welcome";
+  const match = (Object.entries(VIEW_CONFIG) as [ViewState, { hash: string }][]).find(
+    ([, config]) => config.hash === currentHash
+  );
+
+  return match ? match[0] : "welcome";
+};
 
 /**
  * Root application component for Bonita Encode.
  *
  * This component owns:
  * - The global "view state" (which major screen the user is on).
- * - The currently generated `WellnessPlan` (if any).
  * - The currently focused `PillarType` (if the user drilled into a specific pillar).
- * - The loading flag while the AI is synthesizing protocols.
+ * - The lifecycle of the `WellnessPlan` via `useWellnessPlan`.
  *
- * Think of this as the "router + orchestrator":
- * - Child components handle detailed UI / interactions.
- * - App coordinates when to show which child and passes the right props down.
+ * It synchronizes view state with the URL hash so that:
+ * - Back/forward browser navigation works intuitively.
+ * - Specific screens can be deep‑linked and reloaded.
  */
 const App: React.FC = () => {
   /**
    * `view` drives which major screen is visible.
-   * Valid values are defined in `ViewState` and should stay in sync with the
-   * conditional branches in the JSX below.
+   * Initial value is derived from the URL to support deep links and reloads.
    */
-  const [view, setView] = useState<ViewState>('welcome');
-
-  /**
-   * The full wellness plan returned from the AI.
-   * - `null` means the user has not generated a plan yet or has reset.
-   * - When set, the dashboard becomes available.
-   */
-  const [plan, setPlan] = useState<WellnessPlan | null>(null);
-
-  /**
-   * Tracks whether we are currently waiting for `generateWellnessPlan`.
-   * While `true`, we hide the chat and show a full‑screen loading state
-   * to avoid the user interacting with stale UI.
-   */
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [view, setView] = useState<ViewState>(() => getViewFromLocation());
 
   /**
    * The currently focused pillar, if the user has selected one.
@@ -50,7 +54,57 @@ const App: React.FC = () => {
    * - `PillarDetail` (to render the detailed view).
    * - `ChatInterface` (to bias the conversation toward that pillar).
    */
-  const [selectedPillar, setSelectedPillar] = useState<PillarType | undefined>(undefined);
+  const [selectedPillar, setSelectedPillar] = useState<PillarType | undefined>(
+    undefined
+  );
+
+  /**
+   * Encapsulated plan lifecycle and error handling.
+   * - `plan`: latest generated wellness plan (or null if none).
+   * - `isGenerating`: true while AI is synthesizing a plan.
+   * - `error`: user-facing error message when plan generation fails.
+   */
+  const { plan, isGenerating, error, generateFromHistory, reset, clearError } =
+    useWellnessPlan();
+
+  /**
+   * Keep view state in sync when the user navigates with the browser controls
+   * (back/forward) or when the URL hash changes for any other reason.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleHashChange = () => {
+      setView(getViewFromLocation());
+    };
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  /**
+   * Whenever the internal `view` changes, update the URL hash.
+   * This keeps the address bar aligned with what the user sees.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const config = VIEW_CONFIG[view];
+    if (!config) return;
+
+    if (window.location.hash !== config.hash) {
+      window.history.pushState(null, "", config.hash);
+    }
+  }, [view]);
+
+  /**
+   * Helper to navigate between views from within this component.
+   * All view changes should go through this function so URL state,
+   * guards, and any future side effects remain centralized.
+   */
+  const navigate = (nextView: ViewState) => {
+    setView(nextView);
+  };
 
   /**
    * Navigation: user chose to start the assessment from the welcome screen.
@@ -59,21 +113,21 @@ const App: React.FC = () => {
    */
   const handleStart = () => {
     setSelectedPillar(undefined);
-    setView('assessment');
+    navigate("assessment");
   };
 
   /**
    * Navigation: open the static / curated resources view.
    */
   const handleResources = () => {
-    setView('resources');
+    navigate("resources");
   };
 
   /**
    * Navigation: explain how the product works and how to use it.
    */
   const handleHowToUse = () => {
-    setView('how-to-use');
+    navigate("how-to-use");
   };
 
   /**
@@ -83,7 +137,7 @@ const App: React.FC = () => {
    */
   const handlePillarSelect = (pillar: PillarType) => {
     setSelectedPillar(pillar);
-    setView('pillar-detail');
+    navigate("pillar-detail");
   };
 
   /**
@@ -95,8 +149,7 @@ const App: React.FC = () => {
    * the first messages.
    */
   const handleStartPillarChat = () => {
-    setView('assessment');
-    // selectedPillar stays set, which ChatInterface will read
+    navigate("assessment");
   };
 
   /**
@@ -105,32 +158,22 @@ const App: React.FC = () => {
    */
   const handleDirectChatStart = (pillar?: PillarType) => {
     setSelectedPillar(pillar);
-    setView('assessment');
+    navigate("assessment");
   };
 
   /**
    * Called by `ChatInterface` when the assessment conversation is complete.
    *
    * Responsibilities:
-   * - Flip the loading state on.
-   * - Call the Gemini service with the full chat history.
-   * - Persist the returned wellness plan.
-   * - Navigate the user to the dashboard view.
+   * - Delegate plan creation to `useWellnessPlan`.
+   * - Navigate the user to the dashboard once a plan is available.
    *
-   * If anything fails, we log to the console for debugging and surface a
-   * user‑friendly alert so they can try again.
+   * Any errors are handled by the hook and surfaced via `error`.
    */
   const handleAssessmentComplete = async (history: ChatMessage[]) => {
-    setIsGenerating(true);
-    try {
-      const generatedPlan = await generateWellnessPlan(history);
-      setPlan(generatedPlan);
-      setView('dashboard');
-    } catch (error) {
-      console.error("Failed to generate plan", error);
-      alert("We encountered an issue generating your protocols. Please try again.");
-    } finally {
-      setIsGenerating(false);
+    const generatedPlan = await generateFromHistory(history);
+    if (generatedPlan) {
+      navigate("dashboard");
     }
   };
 
@@ -143,81 +186,51 @@ const App: React.FC = () => {
    * to restart their journey or update their inputs.
    */
   const handleReset = () => {
-    setPlan(null);
+    reset();
     setSelectedPillar(undefined);
-    setView('welcome');
+    navigate("welcome");
+  };
+
+  /**
+   * Exit handler from the assessment chat back to the welcome screen.
+   * Keeps any existing plan intact while letting the user start over later.
+   */
+  const handleExitAssessment = () => {
+    navigate("welcome");
   };
 
   return (
     <div className="min-h-screen">
       <div className="container mx-auto px-4 py-8 h-full">
-        {/* Landing experience:
-            - Introduces the product.
-            - Lets users start the assessment, browse resources, or deep‑dive into pillars. */}
-        {view === 'welcome' && (
-          <Welcome 
-            onStart={handleStart} 
-            onResources={handleResources}
-            onPillarSelect={handlePillarSelect}
-            onHowToUse={handleHowToUse}
-          />
-        )}
-
-        {/* Static / curated content hub with educational resources.
-            Users can return home or jump straight into an assessment (optionally pillar‑scoped). */}
-        {view === 'resources' && (
-          <Resources 
-            onBack={() => setView('welcome')} 
-            onStartAssessment={handleDirectChatStart}
-          />
-        )}
-
-        {/* Product education: explains how to use Bonita Encode and
-            what to expect from the protocols. */}
-        {view === 'how-to-use' && (
-          <HowToUse 
-            onBack={() => setView('welcome')}
-            onSignup={handleStart}
-          />
-        )}
-
-        {/* Detailed view for a single pillar.
-            - Depends on `selectedPillar` being set.
-            - Can route into a pillar‑focused chat. */}
-        {view === 'pillar-detail' && selectedPillar && (
-          <PillarDetail 
-            pillar={selectedPillar} 
-            onBack={() => setView('welcome')} 
-            onChat={handleStartPillarChat}
-          />
-        )}
-
-        {/* Chat‑based assessment experience.
-            Hidden while we are generating protocols to avoid confusing the user. */}
-        {view === 'assessment' && !isGenerating && (
-          <ChatInterface 
-            onComplete={handleAssessmentComplete} 
-            onExit={() => setView('welcome')}
-            initialPillar={selectedPillar}
-          />
-        )}
-
-        {/* Full‑screen loading state while Gemini synthesizes the wellness plan.
-            This replaces the chat view so the user clearly sees that their
-            inputs are being processed. */}
-        {isGenerating && (
-          <div className="h-screen flex flex-col items-center justify-center animate-pulse">
-            <Loader2 className="animate-spin text-pink-500 mb-4" size={48} />
-            <h2 className="text-2xl font-bold text-gray-700">Synthesizing Protocols...</h2>
-            <p className="text-gray-500 mt-2">Calibrating IQ, EQ, and KQ metrics.</p>
+        {/* Inline, dismissible error banner for plan-generation failures. */}
+        {error && (
+          <div className="mb-4 flex items-start justify-between gap-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={clearError}
+              className="text-xs font-semibold underline"
+            >
+              Dismiss
+            </button>
           </div>
         )}
 
-        {/* Once a plan has been generated, the dashboard becomes the primary view.
-            From here the user can review protocols and choose to reset if needed. */}
-        {view === 'dashboard' && plan && (
-          <Dashboard plan={plan} onReset={handleReset} />
-        )}
+        <AppRouter
+          view={view}
+          isGenerating={isGenerating}
+          plan={plan}
+          selectedPillar={selectedPillar}
+          onStart={handleStart}
+          onResources={handleResources}
+          onHowToUse={handleHowToUse}
+          onPillarSelect={handlePillarSelect}
+          onStartPillarChat={handleStartPillarChat}
+          onDirectChatStart={handleDirectChatStart}
+          onAssessmentComplete={handleAssessmentComplete}
+          onExitAssessment={handleExitAssessment}
+          onReset={handleReset}
+        />
       </div>
     </div>
   );
